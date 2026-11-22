@@ -1,0 +1,623 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Glow Cam">
+<meta name="theme-color" content="#000000">
+<title>Glow Cam</title>
+<style>
+  :root{
+    --rose:#f2a7b8; --rose-deep:#e0718c; --ink:#1b1416; --cream:#fff7f3;
+    --glass:rgba(20,14,16,.55); --line:rgba(255,255,255,.14);
+  }
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent;margin:0;padding:0}
+  html,body{height:100%;background:#000;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;overflow:hidden;overscroll-behavior:none;touch-action:manipulation}
+  button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
+  #stage{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#000}
+  #view{width:100%;height:100%;object-fit:cover;display:block}
+  video#cam{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
+
+  /* tela inicial */
+  #intro{position:fixed;inset:0;z-index:30;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:22px;padding:32px;text-align:center;
+    background:radial-gradient(120% 80% at 50% 20%,#3a1f27 0%,#140c0f 60%,#000 100%)}
+  #intro h1{font-size:34px;font-weight:700;letter-spacing:-.5px}
+  #intro h1 span{color:var(--rose)}
+  #intro p{color:rgba(255,255,255,.72);font-size:15px;line-height:1.5;max-width:320px}
+  .cta{background:var(--rose);color:var(--ink);font-weight:700;font-size:17px;padding:16px 34px;border-radius:999px;box-shadow:0 10px 30px rgba(242,167,184,.35)}
+  .cta:disabled{opacity:.6}
+  #status{font-size:13px;color:rgba(255,255,255,.6);min-height:18px}
+
+  /* barra superior */
+  #top{position:fixed;left:0;right:0;top:0;z-index:10;display:flex;justify-content:space-between;align-items:center;
+    padding:calc(env(safe-area-inset-top) + 10px) 16px 10px}
+  .chip{background:var(--glass);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);border:1px solid var(--line);border-radius:999px;padding:8px 14px;font-size:14px;font-weight:600;display:flex;align-items:center;gap:8px}
+  #timer{font-variant-numeric:tabular-nums;display:none}
+  #timer.on{display:flex}
+  #timer i{width:9px;height:9px;border-radius:50%;background:#ff3b5c;animation:pulse 1s infinite}
+  @keyframes pulse{50%{opacity:.25}}
+  #faceHint{font-size:12px;font-weight:500;opacity:0;transition:opacity .3s}
+  #faceHint.on{opacity:1}
+
+  /* painel inferior */
+  #panel{position:fixed;left:0;right:0;bottom:0;z-index:10;padding:0 0 calc(env(safe-area-inset-bottom) + 14px);
+    background:linear-gradient(to top,rgba(0,0,0,.75),rgba(0,0,0,.35) 70%,transparent)}
+  #sliders{padding:14px 18px 6px;display:none;flex-direction:column;gap:12px;max-height:40vh;overflow-y:auto}
+  #sliders.on{display:flex}
+  .row{display:flex;align-items:center;gap:12px}
+  .row label{width:88px;font-size:13px;font-weight:600;color:rgba(255,255,255,.9)}
+  .row input[type=range]{flex:1;-webkit-appearance:none;appearance:none;height:4px;border-radius:4px;background:rgba(255,255,255,.25);outline:none}
+  .row input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:22px;height:22px;border-radius:50%;background:#fff;box-shadow:0 2px 8px rgba(0,0,0,.4)}
+  .row output{width:30px;text-align:right;font-size:12px;color:rgba(255,255,255,.7);font-variant-numeric:tabular-nums}
+  .swatches{display:flex;gap:10px;padding-left:100px;margin-top:-4px}
+  .sw{width:26px;height:26px;border-radius:50%;border:2px solid rgba(255,255,255,.25)}
+  .sw.sel{border-color:#fff;transform:scale(1.12)}
+
+  #presets{display:flex;gap:8px;overflow-x:auto;padding:10px 16px 4px;scrollbar-width:none}
+  #presets::-webkit-scrollbar{display:none}
+  .pre{flex:none;padding:8px 14px;border-radius:999px;font-size:13px;font-weight:600;background:rgba(255,255,255,.12);border:1px solid var(--line)}
+  .pre.sel{background:#fff;color:var(--ink)}
+
+  #controls{display:flex;align-items:center;justify-content:space-between;padding:12px 34px 0}
+  .side{width:52px;height:52px;border-radius:50%;display:flex;align-items:center;justify-content:center;background:var(--glass);border:1px solid var(--line);backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px)}
+  .side svg{width:24px;height:24px}
+  .side.on{background:#fff;color:var(--ink)}
+  #rec{width:78px;height:78px;border-radius:50%;border:4px solid #fff;display:flex;align-items:center;justify-content:center}
+  #rec span{width:60px;height:60px;border-radius:50%;background:#ff3b5c;transition:all .2s}
+  #rec.on span{width:28px;height:28px;border-radius:7px}
+
+  /* resultado */
+  #result{position:fixed;inset:0;z-index:40;background:#000;display:none;flex-direction:column}
+  #result.on{display:flex}
+  #result video{flex:1;width:100%;min-height:0;object-fit:contain;background:#000}
+  #resultBar{display:flex;gap:10px;padding:14px 16px calc(env(safe-area-inset-bottom) + 14px)}
+  #resultBar button,#resultBar a{flex:1;text-align:center;padding:15px 10px;border-radius:14px;font-weight:700;font-size:15px;text-decoration:none;color:inherit}
+  .b-main{background:var(--rose);color:var(--ink)!important}
+  .b-sec{background:rgba(255,255,255,.12)}
+  #resultInfo{position:absolute;top:calc(env(safe-area-inset-top) + 12px);left:0;right:0;text-align:center;font-size:12px;color:rgba(255,255,255,.7)}
+  #toast{position:fixed;left:50%;top:calc(env(safe-area-inset-top) + 64px);transform:translateX(-50%);z-index:50;background:rgba(0,0,0,.8);padding:10px 16px;border-radius:12px;font-size:14px;opacity:0;transition:opacity .25s;pointer-events:none;text-align:center;max-width:86vw}
+  #toast.on{opacity:1}
+</style>
+</head>
+<body>
+
+<div id="stage">
+  <canvas id="view"></canvas>
+  <video id="cam" playsinline muted autoplay></video>
+</div>
+
+<div id="intro">
+  <h1>Glow <span>Cam</span></h1>
+  <p>Pele suavizada, blush e batom em tempo real. Grave até 10 minutos, sem marca d'água, e salve direto no seu rolo da câmera.</p>
+  <button class="cta" id="start">Abrir câmera</button>
+  <div id="status"></div>
+</div>
+
+<div id="top">
+  <div class="chip" id="timer"><i></i><span id="tval">00:00</span><span style="opacity:.5">/ 10:00</span></div>
+  <div class="chip" id="faceHint">Procurando seu rosto…</div>
+  <div></div>
+</div>
+
+<div id="panel">
+  <div id="presets">
+    <button class="pre" data-p="tiktok">Meu TikTok</button>
+    <button class="pre" data-p="off">Sem filtro</button>
+    <button class="pre" data-p="natural">Natural</button>
+    <button class="pre" data-p="glow">Glow</button>
+    <button class="pre" data-p="make">Make</button>
+    <button class="pre" data-p="boneca">Bonequinha</button>
+  </div>
+  <div id="sliders">
+    <div class="row"><label>Pele</label><input type="range" id="sSmooth" min="0" max="100"><output id="oSmooth"></output></div>
+    <div class="row"><label>Iluminar</label><input type="range" id="sGlow" min="0" max="100"><output id="oGlow"></output></div>
+    <div class="row"><label>Blush</label><input type="range" id="sBlush" min="0" max="100"><output id="oBlush"></output></div>
+    <div class="swatches" id="blushSw"></div>
+    <div class="row"><label>Batom</label><input type="range" id="sLip" min="0" max="100"><output id="oLip"></output></div>
+    <div class="swatches" id="lipSw"></div>
+    <div class="row"><label>Cílios</label><input type="range" id="sLash" min="0" max="100"><output id="oLash"></output></div>
+    <div class="row"><label>Sobrancelha</label><input type="range" id="sBrow" min="0" max="100"><output id="oBrow"></output></div>
+    <div class="row"><label>Olhos</label><input type="range" id="sEyes" min="0" max="100"><output id="oEyes"></output></div>
+    <div class="row"><label>Afinar</label><input type="range" id="sSlim" min="0" max="100"><output id="oSlim"></output></div>
+  </div>
+  <div id="controls">
+    <button class="side" id="toggleSliders" aria-label="Ajustes">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/></svg>
+    </button>
+    <button id="rec" aria-label="Gravar"><span></span></button>
+    <button class="side" id="compare" aria-label="Segure para comparar">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/><path d="M12 4v16" /><path d="M12 4a8 8 0 0 1 0 16z" fill="currentColor"/></svg>
+    </button>
+  </div>
+</div>
+
+<div id="result">
+  <div id="resultInfo"></div>
+  <video id="playback" playsinline controls></video>
+  <div id="resultBar">
+    <button class="b-sec" id="discard">Descartar</button>
+    <button class="b-main" id="save">Salvar vídeo</button>
+  </div>
+</div>
+
+<div id="toast"></div>
+
+<script type="module">
+const MP_VER = "0.10.14";
+const MP_URL = `https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@${MP_VER}`;
+const MODEL_URL = "https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task";
+const MAX_SECONDS = 10 * 60;
+
+// ---------- pontos do rosto (malha de 468 pontos do MediaPipe) ----------
+const OVAL = [10,338,297,332,284,251,389,356,454,323,361,288,397,365,379,378,400,377,152,148,176,149,150,136,172,58,132,93,234,127,162,21,54,103,67,109];
+const LIP_OUT = [61,185,40,39,37,0,267,269,270,409,291,375,321,405,314,17,84,181,91,146];
+const LIP_IN  = [78,191,80,81,82,13,312,311,310,415,308,324,318,402,317,14,87,178,88,95];
+const EYE_L = [263,249,390,373,374,380,381,382,362,398,384,385,386,387,388,466];
+const EYE_R = [33,7,163,144,145,153,154,155,133,173,157,158,159,160,161,246];
+const BROW_L = [276,283,282,295,285,300,293,334,296,336];
+const BROW_R = [46,53,52,65,55,70,63,105,66,107];
+
+const LIP_COLORS  = ["#d97884","#c2185b","#d9475f","#b5473d","#a0525c","#7a1f3d"];
+const BLUSH_COLORS= ["#ee8a8c","#f28aa0","#ff9d8a","#e86f8a","#f5a3c7"];
+// contorno de cima dos olhos, do canto de dentro para o de fora
+const LID_R = [133,173,157,158,159,160,161,246,33];
+const LID_L = [362,398,384,385,386,387,388,466,263];
+const SLIDERS = [["Smooth","smooth"],["Glow","glow"],["Blush","blush"],["Lip","lip"],["Lash","lash"],["Brow","brow"],["Eyes","eyes"],["Slim","slim"]];
+
+const PRESETS = {
+  tiktok:  {smooth:95, glow:60, blush:60, lip:55, lash:65, brow:35, eyes:40, slim:55, blushColor:"#ee8a8c", lipColor:"#d97884"},
+  off:     {smooth:0,  glow:0,  blush:0,  lip:0,  lash:0,  brow:0,  eyes:0,  slim:0},
+  natural: {smooth:45, glow:20, blush:25, lip:20, lash:25, brow:10, eyes:0,  slim:0},
+  glow:    {smooth:60, glow:55, blush:35, lip:30, lash:30, brow:15, eyes:10, slim:10},
+  make:    {smooth:55, glow:30, blush:50, lip:60, lash:70, brow:35, eyes:15, slim:15},
+  boneca:  {smooth:85, glow:45, blush:65, lip:55, lash:75, brow:25, eyes:45, slim:40},
+};
+
+// ---------- estado ----------
+const S = loadSettings();
+function loadSettings(){
+  const d = {preset:"tiktok", ...PRESETS.tiktok};
+  try{ return {...d, ...JSON.parse(localStorage.getItem("glowcam2") || "{}")}; }catch{ return d; }
+}
+function saveSettings(){ try{ localStorage.setItem("glowcam2", JSON.stringify(S)); }catch{} }
+
+const $ = id => document.getElementById(id);
+const video = $("cam"), view = $("view");
+let stream, landmarker, gl, prog, texVideo, texMask, texMake, uni = {};
+let lastLm = null, lostFrames = 0, comparing = false;
+let maskCv, maskCtx, makeCv, makeCtx;
+let recorder = null, chunks = [], recStart = 0, recTimer = null, wakeLock = null, lastBlob = null, lastMime = "";
+
+function toast(msg, ms=2600){ const t=$("toast"); t.textContent=msg; t.classList.add("on"); clearTimeout(t._h); t._h=setTimeout(()=>t.classList.remove("on"), ms); }
+
+// ---------- UI ----------
+function buildUI(){
+  const mk = (wrap, colors, key) => {
+    colors.forEach(c => {
+      const b = document.createElement("button");
+      b.className = "sw" + (S[key]===c ? " sel" : ""); b.style.background = c;
+      b.onclick = () => { S[key]=c; [...wrap.children].forEach(x=>x.classList.remove("sel")); b.classList.add("sel"); saveSettings(); };
+      wrap.appendChild(b);
+    });
+  };
+  mk($("lipSw"), LIP_COLORS, "lipColor");
+  mk($("blushSw"), BLUSH_COLORS, "blushColor");
+
+  const bind = (id, key) => {
+    const el = $("s"+id), out = $("o"+id);
+    el.value = S[key]; out.textContent = S[key];
+    el.oninput = () => { S[key] = +el.value; out.textContent = el.value; S.preset = null; markPreset(); saveSettings(); };
+  };
+  SLIDERS.forEach(([id,key]) => bind(id,key));
+
+  document.querySelectorAll(".pre").forEach(b => b.onclick = () => {
+    Object.assign(S, PRESETS[b.dataset.p]); S.preset = b.dataset.p;
+    for (const [id,key] of SLIDERS) { $("s"+id).value=S[key]; $("o"+id).textContent=S[key]; }
+    for (const [wrap,key] of [["lipSw","lipColor"],["blushSw","blushColor"]]) [...$(wrap).children].forEach(x=>x.classList.toggle("sel", x.style.background && rgbHex(x.style.background)===S[key]));
+    markPreset(); saveSettings();
+  });
+  markPreset();
+
+  $("toggleSliders").onclick = () => { $("sliders").classList.toggle("on"); $("toggleSliders").classList.toggle("on"); };
+  const cmp = $("compare");
+  const on = e => { e.preventDefault(); comparing = true; cmp.classList.add("on"); };
+  const off = () => { comparing = false; cmp.classList.remove("on"); };
+  cmp.addEventListener("touchstart", on, {passive:false}); cmp.addEventListener("touchend", off); cmp.addEventListener("touchcancel", off);
+  cmp.addEventListener("mousedown", on); window.addEventListener("mouseup", off);
+
+  $("rec").onclick = () => recorder ? stopRec() : startRec();
+  $("discard").onclick = closeResult;
+  $("save").onclick = saveVideo;
+}
+function rgbHex(c){ const m=c.match(/\d+/g); return m ? "#"+m.slice(0,3).map(n=>(+n).toString(16).padStart(2,"0")).join("") : c; }
+function markPreset(){ document.querySelectorAll(".pre").forEach(b => b.classList.toggle("sel", b.dataset.p===S.preset)); }
+
+// ---------- início ----------
+$("start").onclick = async () => {
+  const btn = $("start"), st = $("status");
+  btn.disabled = true;
+  try{
+    st.textContent = "Pedindo acesso à câmera…";
+    stream = await navigator.mediaDevices.getUserMedia({
+      video:{facingMode:"user", width:{ideal:720}, height:{ideal:1280}, frameRate:{ideal:30}},
+      audio:{echoCancellation:true, noiseSuppression:true}
+    });
+    video.srcObject = stream;
+    await video.play();
+    await new Promise(r => video.videoWidth ? r() : video.onloadedmetadata = r);
+
+    st.textContent = "Carregando o filtro (só na primeira vez demora)…";
+    await loadLandmarker();
+
+    setupGL();
+    buildUI();
+    $("intro").style.display = "none";
+    requestAnimationFrame(loop);
+  }catch(err){
+    console.error(err);
+    btn.disabled = false;
+    st.textContent = err && err.name === "NotAllowedError"
+      ? "Permita o acesso à câmera e ao microfone nos ajustes do Safari e tente de novo."
+      : "Não consegui abrir: " + (err && err.message || err);
+  }
+};
+
+async function loadLandmarker(){
+  const vision = await import(`${MP_URL}/vision_bundle.mjs`);
+  const fileset = await vision.FilesetResolver.forVisionTasks(`${MP_URL}/wasm`);
+  const opts = d => ({ baseOptions:{modelAssetPath:MODEL_URL, delegate:d}, runningMode:"VIDEO", numFaces:1,
+                       minFaceDetectionConfidence:.5, minFacePresenceConfidence:.5, minTrackingConfidence:.5 });
+  try { landmarker = await vision.FaceLandmarker.createFromOptions(fileset, opts("GPU")); }
+  catch(e){ console.warn("GPU falhou, usando CPU", e); landmarker = await vision.FaceLandmarker.createFromOptions(fileset, opts("CPU")); }
+}
+
+// ---------- WebGL ----------
+const VS = `attribute vec2 p; varying vec2 vUv; void main(){ vUv = p*0.5+0.5; gl_Position = vec4(p,0.,1.); }`;
+const FS = `
+precision highp float;
+varying vec2 vUv;
+uniform sampler2D uVideo, uMask, uMake;
+uniform vec2 uTexel, uMaskTexel, uMakeTexel, uSize;
+uniform float uSmooth, uGlow, uRadius, uBypass;
+uniform vec4 uEye[2];       // xy = centro (px), z = raio (px), w = força
+uniform vec4 uPush[6];      // xy = centro (px), z = raio (px)
+uniform vec2 uPushV[6];     // deslocamento (px) do conteúdo
+
+float lum(vec3 c){ return dot(c, vec3(.299,.587,.114)); }
+
+vec2 warp(vec2 uv){
+  vec2 p = uv * uSize;
+  for (int i=0;i<6;i++){
+    vec2 d = p - uPush[i].xy; float R = uPush[i].z;
+    float t = clamp(1. - dot(d,d)/(R*R + .001), 0., 1.);
+    p -= uPushV[i] * t*t;
+  }
+  for (int i=0;i<2;i++){
+    vec2 d = p - uEye[i].xy; float R = uEye[i].z;
+    float t = clamp(1. - dot(d,d)/(R*R + .001), 0., 1.);
+    p = uEye[i].xy + d * (1. - uEye[i].w * t*t);
+  }
+  return p / uSize;
+}
+
+void main(){
+  vec2 uv = vec2(1.0 - vUv.x, vUv.y);          // espelhado, como selfie
+  if (uBypass > .5) { gl_FragColor = vec4(texture2D(uVideo, uv).rgb,1.); return; }
+  uv = warp(uv);
+  vec3 c = texture2D(uVideo, uv).rgb;
+
+  // máscara da pele e camada de make, com borda suave
+  float m = 0.; vec4 mk = vec4(0.);
+  for (int i=-2;i<=2;i++) for (int j=-2;j<=2;j++){
+    vec2 o = vec2(float(i), float(j));
+    m  += texture2D(uMask, uv + o*uMaskTexel*1.5).a;
+    mk += texture2D(uMake, uv + o*uMakeTexel*0.8);
+  }
+  m /= 25.; mk /= 25.;
+
+  vec3 base = c;
+  if (m > 0.001 && uSmooth > 0.001){
+    // filtro bilateral: alisa a pele sem borrar contornos
+    vec3 sum = c; float wsum = 1.;
+    for (int r=1;r<=5;r++){
+      for (int k=0;k<8;k++){
+        float a = float(k)*0.785398 + float(r)*0.39;
+        vec2 o = vec2(cos(a), sin(a)) * float(r) * uRadius * uTexel;
+        vec3 s = texture2D(uVideo, uv + o).rgb;
+        vec3 d = s - c;
+        float w = exp(-dot(d,d)*22.) * exp(-float(r*r)/30.);
+        sum += s*w; wsum += w;
+      }
+    }
+    vec3 sm = sum/wsum;
+    float k = clamp(m*uSmooth, 0., 1.);
+    base = mix(c, sm, k);
+    // uniformiza o tom: tira manchas vermelhas e o amarelado
+    float L = lum(base);
+    vec3 even = mix(vec3(L), base, .8);
+    even *= vec3(1.0, 1.0, 1.015);
+    base = mix(base, even, k*.8);
+  }
+  // iluminar: pele mais clarinha e levemente rosada
+  float g = m*uGlow;
+  base = mix(base, 1. - (1.-base)*(1.-base*.55), g*.6);
+  base += g*vec3(.018,.008,.002);
+
+  // make (blush, batom, cílios, sobrancelha), preservando sombras do rosto
+  if (mk.a > 0.002){
+    vec3 col = mk.rgb / mk.a;
+    float L = lum(base);
+    vec3 tint = mix(base*col*1.35, col*(0.25 + 1.05*L), .55);
+    base = mix(base, clamp(tint,0.,1.), clamp(mk.a,0.,1.));
+  }
+  gl_FragColor = vec4(clamp(base,0.,1.), 1.);
+}`;
+
+function setupGL(){
+  const W = video.videoWidth, H = video.videoHeight;
+  view.width = W; view.height = H;
+  gl = view.getContext("webgl", {preserveDrawingBuffer:true, premultipliedAlpha:false, antialias:false});
+  if (!gl) throw new Error("WebGL indisponível neste navegador");
+
+  const sh = (type, src) => { const s = gl.createShader(type); gl.shaderSource(s, src); gl.compileShader(s);
+    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(s)); return s; };
+  prog = gl.createProgram();
+  gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS)); gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+  gl.useProgram(prog);
+
+  const buf = gl.createBuffer(); gl.bindBuffer(gl.ARRAY_BUFFER, buf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
+  const loc = gl.getAttribLocation(prog, "p"); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
+
+  for (const n of ["uVideo","uMask","uMake","uTexel","uMaskTexel","uMakeTexel","uSize","uSmooth","uGlow","uRadius","uBypass","uEye","uPush","uPushV"]) uni[n] = gl.getUniformLocation(prog, n);
+
+  const mkTex = unit => { const t = gl.createTexture(); gl.activeTexture(gl.TEXTURE0+unit); gl.bindTexture(gl.TEXTURE_2D, t);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE); return t; };
+  texVideo = mkTex(0); texMask = mkTex(1); texMake = mkTex(2);
+  gl.uniform1i(uni.uVideo, 0); gl.uniform1i(uni.uMask, 1); gl.uniform1i(uni.uMake, 2);
+
+  maskCv = document.createElement("canvas"); maskCv.width = Math.round(W/4); maskCv.height = Math.round(H/4);
+  makeCv = document.createElement("canvas"); makeCv.width = W; makeCv.height = H;
+  maskCtx = maskCv.getContext("2d"); makeCtx = makeCv.getContext("2d");
+
+  gl.uniform2f(uni.uTexel, 1/W, 1/H); gl.uniform2f(uni.uSize, W, H);
+  gl.uniform2f(uni.uMaskTexel, 1/maskCv.width, 1/maskCv.height);
+  gl.uniform2f(uni.uMakeTexel, 1/makeCv.width, 1/makeCv.height);
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+  gl.viewport(0,0,W,H);
+}
+
+// ---------- desenho das camadas ----------
+function path(ctx, lm, idx, w, h){ ctx.moveTo(lm[idx[0]].x*w, lm[idx[0]].y*h); for (let i=1;i<idx.length;i++) ctx.lineTo(lm[idx[i]].x*w, lm[idx[i]].y*h); ctx.closePath(); }
+
+function grow(lm, idx, k){ // aumenta a área de um contorno a partir do centro
+  let cx=0, cy=0; idx.forEach(i=>{cx+=lm[i].x; cy+=lm[i].y}); cx/=idx.length; cy/=idx.length;
+  const o = {}; idx.forEach(i=>{ o[i] = {x:cx+(lm[i].x-cx)*k, y:cy+(lm[i].y-cy)*k}; }); return o;
+}
+
+function drawLayers(lm){
+  // máscara da pele
+  const mw = maskCv.width, mh = maskCv.height, c = maskCtx;
+  c.clearRect(0,0,mw,mh);
+  if (lm){
+    c.globalCompositeOperation = "source-over"; c.fillStyle = "#fff";
+    c.beginPath(); path(c, grow(lm, OVAL, .97), OVAL, mw, mh); c.fill();
+    c.globalCompositeOperation = "destination-out";
+    for (const idx of [EYE_L, EYE_R]) { c.beginPath(); path(c, grow(lm, idx, 1.35), idx, mw, mh); c.fill(); }
+    for (const idx of [BROW_L, BROW_R]) { c.beginPath(); path(c, grow(lm, idx, 1.2), idx, mw, mh); c.fill(); }
+    c.beginPath(); path(c, lm, LIP_IN, mw, mh); c.fill();
+    c.globalCompositeOperation = "source-over";
+  }
+  // make
+  const kw = makeCv.width, kh = makeCv.height, k = makeCtx;
+  k.clearRect(0,0,kw,kh);
+  if (lm){
+    const P = i => ({x:lm[i].x*kw, y:lm[i].y*kh});
+    const fx = (lm[454].x - lm[234].x) * kw, fy = (lm[454].y - lm[234].y) * kh;
+    const faceW = Math.hypot(fx, fy), ang = Math.atan2(fy, fx);
+
+    if (S.blush > 0){
+      // bochechas: um pouco abaixo e para fora dos olhos, bem esfumado
+      for (const [a,b,c] of [[50,116,205],[280,345,425]]){
+        const x = (lm[a].x*.55 + lm[b].x*.2 + lm[c].x*.25)*kw, y = (lm[a].y*.55 + lm[b].y*.2 + lm[c].y*.25)*kh;
+        const r = faceW*.22;
+        k.save(); k.translate(x,y); k.rotate(ang); k.scale(1.3, .9);
+        const g = k.createRadialGradient(0,0,0, 0,0,r);
+        const al = (S.blush/100)*.34;
+        g.addColorStop(0, hexA(S.blushColor, al)); g.addColorStop(.4, hexA(S.blushColor, al*.75)); g.addColorStop(.75, hexA(S.blushColor, al*.3)); g.addColorStop(1, hexA(S.blushColor, 0));
+        k.fillStyle = g; k.beginPath(); k.arc(0,0,r,0,Math.PI*2); k.fill(); k.restore();
+      }
+    }
+    if (S.brow > 0){
+      k.save(); k.fillStyle = hexA("#3b2a24", (S.brow/100)*.45); k.shadowColor = hexA("#3b2a24", (S.brow/100)*.45); k.shadowBlur = faceW*.012;
+      for (const idx of [BROW_L, BROW_R]) { k.beginPath(); path(k, lm, idx, kw, kh); k.fill(); }
+      k.restore();
+    }
+    if (S.lip > 0){
+      k.save(); k.fillStyle = hexA(S.lipColor, (S.lip/100)*.8);
+      k.shadowColor = hexA(S.lipColor, (S.lip/100)*.8); k.shadowBlur = faceW*.02;
+      k.beginPath(); path(k, lm, LIP_OUT, kw, kh); path(k, lm, LIP_IN, kw, kh); k.fill("evenodd"); k.restore();
+    }
+    if (S.lash > 0) drawLashes(k, lm, kw, kh, faceW);
+  }
+}
+function drawLashes(k, lm, kw, kh, faceW){
+  const a = S.lash/100, col = "#1a1113";
+  for (const [lid, eyeIdx] of [[LID_R, EYE_R],[LID_L, EYE_L]]){
+    const pts = lid.map(i => ({x:lm[i].x*kw, y:lm[i].y*kh}));
+    let cx=0, cy=0; eyeIdx.forEach(i=>{cx+=lm[i].x*kw; cy+=lm[i].y*kh}); cx/=eyeIdx.length; cy/=eyeIdx.length;
+    const n = pts.length, outer = pts[n-1], prev = pts[n-2];
+    const eyeW = Math.hypot(outer.x-pts[0].x, outer.y-pts[0].y);
+    // delineado fininho que engrossa no canto de fora, com um gatinho curto
+    const wingDir = {x:outer.x-prev.x, y:outer.y-prev.y}; const wl = Math.hypot(wingDir.x,wingDir.y)||1;
+    const up = {x:outer.x-cx, y:outer.y-cy}; const ul = Math.hypot(up.x,up.y)||1;
+    const wing = {x: outer.x + (wingDir.x/wl)*eyeW*.16 + (up.x/ul)*eyeW*.02, y: outer.y + (wingDir.y/wl)*eyeW*.16 - eyeW*.07};
+    k.save(); k.lineCap = "round"; k.lineJoin = "round"; k.strokeStyle = hexA(col, a*.85);
+    k.shadowColor = hexA(col, a*.5); k.shadowBlur = eyeW*.04;
+    for (let i=1;i<n;i++){
+      const t = i/(n-1);
+      k.lineWidth = eyeW*(.018 + .04*t*t) * (0.6 + a*.6);
+      k.beginPath(); k.moveTo(pts[i-1].x, pts[i-1].y); k.lineTo(pts[i].x, pts[i].y); k.stroke();
+    }
+    k.lineWidth = eyeW*.035*(0.6+a*.6); k.beginPath(); k.moveTo(outer.x, outer.y); k.lineTo(wing.x, wing.y); k.stroke();
+    // cílios: fiozinhos curvos saindo da pálpebra para cima/fora
+    k.shadowBlur = 0; k.strokeStyle = hexA(col, a*.75);
+    for (let i=2;i<n;i++){
+      for (const f of [0, .5]){
+        const p0 = pts[i-1], p1 = pts[i];
+        const bx = p0.x + (p1.x-p0.x)*f, by = p0.y + (p1.y-p0.y)*f;
+        const t = (i-1+f)/(n-1);
+        let dx = bx-cx, dy = by-cy; const dl = Math.hypot(dx,dy)||1; dx/=dl; dy/=dl;
+        const len = eyeW*(.07 + .11*t) * (0.5 + a*.7);
+        k.lineWidth = eyeW*.012;
+        k.beginPath(); k.moveTo(bx,by);
+        k.quadraticCurveTo(bx+dx*len*.6, by+dy*len*.6 - len*.15, bx+dx*len + len*.25*t*Math.sign(dx||1), by+dy*len - len*.2);
+        k.stroke();
+      }
+    }
+    k.restore();
+  }
+}
+function hexA(hex, a){ const n = parseInt(hex.slice(1),16); return `rgba(${n>>16&255},${n>>8&255},${n&255},${a})`; }
+
+// ---------- loop ----------
+let lastVideoTime = -1;
+function loop(){
+  requestAnimationFrame(loop);
+  if (video.readyState < 2) return;
+  const now = performance.now();
+  if (video.currentTime !== lastVideoTime){
+    lastVideoTime = video.currentTime;
+    try{
+      const res = landmarker.detectForVideo(video, now);
+      if (res.faceLandmarks && res.faceLandmarks.length){ lastLm = smoothLm(res.faceLandmarks[0]); lostFrames = 0; }
+      else if (++lostFrames > 6) lastLm = null;
+    }catch(e){ /* quadro perdido */ }
+  }
+  $("faceHint").classList.toggle("on", !lastLm && S.preset !== "off");
+
+  drawLayers(lastLm);
+
+  gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, texVideo);
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, video);
+  gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_2D, texMask);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, maskCv);
+  gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, texMake);
+  gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
+  gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, makeCv);
+
+  gl.uniform1f(uni.uSmooth, S.smooth/100);
+  gl.uniform1f(uni.uGlow, S.glow/100);
+  gl.uniform1f(uni.uRadius, Math.max(1.5, video.videoHeight/360) * (0.6 + S.smooth/100));
+  gl.uniform1f(uni.uBypass, comparing ? 1 : 0);
+  setWarp(lastLm);
+  gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+
+// afinar rosto/nariz e aumentar olhos (coordenadas em pixels da textura)
+const eyeBuf = new Float32Array(8), pushBuf = new Float32Array(24), pushVBuf = new Float32Array(12);
+function setWarp(lm){
+  eyeBuf.fill(0); pushBuf.fill(0); pushVBuf.fill(0);
+  if (lm){
+    const W = view.width, H = view.height;
+    const T = i => [lm[i].x*W, (1-lm[i].y)*H];
+    const [lx,ly] = T(234), [rx,ry] = T(454); const faceW = Math.hypot(rx-lx, ry-ly);
+    const [nx,ny] = T(1);
+    // olhos
+    const eyes = [EYE_R, EYE_L];
+    eyes.forEach((idx, e) => {
+      let cx=0, cy=0; idx.forEach(i=>{const [x,y]=T(i); cx+=x; cy+=y}); cx/=idx.length; cy/=idx.length;
+      const [ax,ay]=T(idx===EYE_R?33:263), [bx,by]=T(idx===EYE_R?133:362);
+      eyeBuf.set([cx, cy, Math.hypot(ax-bx, ay-by)*1.15, (S.eyes/100)*.22], e*4);
+    });
+    // rosto: empurra mandíbula e bochechas de baixo para dentro; nariz: abas para dentro
+    const pts = [[132, .2, .035],[361, .2, .035],[58, .19, .035],[288, .19, .035],[129, .07, .012],[358, .07, .012]];
+    pts.forEach(([i, rk, mk], j) => {
+      const [x,y] = T(i); let dx = nx-x, dy = 0; const dl = Math.hypot(dx,dy)||1;
+      const mag = faceW*mk*(S.slim/100);
+      pushBuf.set([x, y, faceW*rk, 0], j*4); pushVBuf.set([dx/dl*mag, dy/dl*mag], j*2);
+    });
+  }
+  gl.uniform4fv(uni.uEye, eyeBuf); gl.uniform4fv(uni.uPush, pushBuf); gl.uniform2fv(uni.uPushV, pushVBuf);
+}
+
+// suaviza tremidinha dos pontos entre quadros
+let prevLm = null;
+function smoothLm(lm){
+  if (!prevLm || prevLm.length !== lm.length){ prevLm = lm.map(p=>({x:p.x,y:p.y})); return prevLm; }
+  const a = .55;
+  for (let i=0;i<lm.length;i++){ prevLm[i].x += (lm[i].x-prevLm[i].x)*a; prevLm[i].y += (lm[i].y-prevLm[i].y)*a; }
+  return prevLm;
+}
+
+// ---------- gravação ----------
+function pickMime(){
+  const opts = ["video/mp4;codecs=avc1.42E01E,mp4a.40.2","video/mp4;codecs=avc1,mp4a","video/mp4","video/webm;codecs=vp9,opus","video/webm;codecs=vp8,opus","video/webm"];
+  for (const m of opts) if (window.MediaRecorder && MediaRecorder.isTypeSupported(m)) return m;
+  return "";
+}
+
+async function startRec(){
+  if (!window.MediaRecorder){ toast("Este navegador não grava vídeo. Atualize o iOS."); return; }
+  const out = view.captureStream(30);
+  stream.getAudioTracks().forEach(t => out.addTrack(t));
+  lastMime = pickMime();
+  try{ recorder = new MediaRecorder(out, {mimeType:lastMime || undefined, videoBitsPerSecond:3_000_000, audioBitsPerSecond:128_000}); }
+  catch{ recorder = new MediaRecorder(out); }
+  lastMime = recorder.mimeType || lastMime || "video/mp4";
+  chunks = [];
+  recorder.ondataavailable = e => { if (e.data && e.data.size) chunks.push(e.data); };
+  recorder.onstop = () => { lastBlob = new Blob(chunks, {type:lastMime.split(";")[0]}); chunks = []; showResult(); };
+  recorder.start(1000);
+  recStart = Date.now();
+  $("rec").classList.add("on"); $("timer").classList.add("on"); $("tval").textContent = "00:00";
+  recTimer = setInterval(() => {
+    const s = Math.floor((Date.now()-recStart)/1000);
+    $("tval").textContent = fmt(s);
+    if (s >= MAX_SECONDS) { stopRec(); toast("Chegou em 10 minutos — gravação salva."); }
+  }, 250);
+  try{ wakeLock = await navigator.wakeLock?.request("screen"); }catch{}
+}
+
+function stopRec(){
+  if (!recorder) return;
+  clearInterval(recTimer);
+  const r = recorder; recorder = null;
+  if (r.state !== "inactive") r.stop();
+  $("rec").classList.remove("on"); $("timer").classList.remove("on");
+  try{ wakeLock?.release(); }catch{} wakeLock = null;
+}
+const fmt = s => String(Math.floor(s/60)).padStart(2,"0")+":"+String(s%60).padStart(2,"0");
+
+document.addEventListener("visibilitychange", () => { if (document.hidden && recorder){ stopRec(); toast("A gravação parou porque o app saiu da tela."); } });
+
+function showResult(){
+  const v = $("playback");
+  if (v.src) URL.revokeObjectURL(v.src);
+  v.src = URL.createObjectURL(lastBlob);
+  $("resultInfo").textContent = `${(lastBlob.size/1048576).toFixed(1)} MB · sem marca d'água`;
+  $("result").classList.add("on");
+}
+function closeResult(){ const v=$("playback"); v.pause(); $("result").classList.remove("on"); }
+
+async function saveVideo(){
+  const ext = lastMime.includes("mp4") ? "mp4" : "webm";
+  const d = new Date(), name = `glowcam-${d.getFullYear()}${String(d.getMonth()+1).padStart(2,"0")}${String(d.getDate()).padStart(2,"0")}-${String(d.getHours()).padStart(2,"0")}${String(d.getMinutes()).padStart(2,"0")}.${ext}`;
+  const file = new File([lastBlob], name, {type:lastBlob.type || "video/mp4"});
+  if (navigator.canShare && navigator.canShare({files:[file]})){
+    try{ await navigator.share({files:[file]}); toast("Escolha “Salvar vídeo” para ir pro seu rolo da câmera."); return; }
+    catch(e){ if (e.name === "AbortError") return; }
+  }
+  const a = document.createElement("a"); a.href = URL.createObjectURL(file); a.download = name; document.body.appendChild(a); a.click(); a.remove();
+  toast("Vídeo baixado.");
+}
+</script>
+</body>
+</html>
