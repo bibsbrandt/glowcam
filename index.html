@@ -18,7 +18,7 @@
   html,body{height:100%;background:#000;color:#fff;font-family:-apple-system,BlinkMacSystemFont,"SF Pro Text","Helvetica Neue",sans-serif;overflow:hidden;overscroll-behavior:none;touch-action:manipulation}
   button{font:inherit;color:inherit;background:none;border:0;cursor:pointer}
   #stage{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:#000}
-  #view{width:100%;height:100%;object-fit:cover;display:block}
+  #view{width:100%;height:100%;object-fit:contain;display:block}
   video#cam{position:absolute;width:1px;height:1px;opacity:0;pointer-events:none}
 
   /* tela inicial */
@@ -99,7 +99,9 @@
 <div id="top">
   <div class="chip" id="timer"><i></i><span id="tval">00:00</span><span style="opacity:.5">/ 10:00</span></div>
   <div class="chip" id="faceHint">Procurando seu rosto…</div>
-  <div></div>
+  <button class="chip" id="flip" aria-label="Trocar câmera">
+    <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 7h-3l-2-3H9L7 7H4a1 1 0 0 0-1 1v11a1 1 0 0 0 1 1h16a1 1 0 0 0 1-1V8a1 1 0 0 0-1-1z"/><path d="M9 13.5a3 3 0 0 1 5.2-2l.8.8M15 13.5a3 3 0 0 1-5.2 2l-.8-.8"/><path d="M15 10v2.3h-2.3M9 17v-2.3h2.3"/></svg>
+  </button>
 </div>
 
 <div id="panel">
@@ -235,25 +237,49 @@ function buildUI(){
 function rgbHex(c){ const m=c.match(/\d+/g); return m ? "#"+m.slice(0,3).map(n=>(+n).toString(16).padStart(2,"0")).join("") : c; }
 function markPreset(){ document.querySelectorAll(".pre").forEach(b => b.classList.toggle("sel", b.dataset.p===S.preset)); }
 
+// ---------- câmera ----------
+let facing = "user";
+// pede 1080p na proporção do sensor (o iPhone gira para retrato sozinho); assim não há recorte/zoom
+const camConstraints = () => ({ facingMode:{ideal:facing}, width:{ideal:1920}, height:{ideal:1080}, frameRate:{ideal:30, max:30} });
+
+async function attachStream(){
+  video.srcObject = stream;
+  await video.play();
+  await new Promise(r => video.videoWidth ? r() : video.onloadedmetadata = r);
+}
+
+async function flipCamera(){
+  if (recorder){ toast("Pare a gravação para trocar de câmera."); return; }
+  const btn = $("flip"); btn.disabled = true;
+  try{
+    facing = facing === "user" ? "environment" : "user";
+    stream.getVideoTracks().forEach(t => t.stop());
+    const vs = await navigator.mediaDevices.getUserMedia({ video: camConstraints(), audio:false });
+    stream = new MediaStream([...vs.getVideoTracks(), ...stream.getAudioTracks()]);
+    await attachStream();
+    resizeGL();
+    prevLm = null; lastLm = null;
+  }catch(e){
+    console.error(e); toast("Não consegui trocar de câmera.");
+    facing = facing === "user" ? "environment" : "user";
+  }finally{ btn.disabled = false; }
+}
+
 // ---------- início ----------
 $("start").onclick = async () => {
   const btn = $("start"), st = $("status");
   btn.disabled = true;
   try{
     st.textContent = "Pedindo acesso à câmera…";
-    stream = await navigator.mediaDevices.getUserMedia({
-      video:{facingMode:"user", width:{ideal:720}, height:{ideal:1280}, frameRate:{ideal:30}},
-      audio:{echoCancellation:true, noiseSuppression:true}
-    });
-    video.srcObject = stream;
-    await video.play();
-    await new Promise(r => video.videoWidth ? r() : video.onloadedmetadata = r);
+    stream = await navigator.mediaDevices.getUserMedia({ video: camConstraints(), audio:{echoCancellation:true, noiseSuppression:true} });
+    await attachStream();
 
     st.textContent = "Carregando o filtro (só na primeira vez demora)…";
     await loadLandmarker();
 
     setupGL();
     buildUI();
+    $("flip").onclick = flipCamera;
     $("intro").style.display = "none";
     requestAnimationFrame(loop);
   }catch(err){
@@ -281,7 +307,7 @@ precision highp float;
 varying vec2 vUv;
 uniform sampler2D uVideo, uMask, uMake;
 uniform vec2 uTexel, uMaskTexel, uMakeTexel, uSize;
-uniform float uSmooth, uGlow, uRadius, uBypass;
+uniform float uSmooth, uGlow, uRadius, uBypass, uMirror;
 uniform vec4 uEye[2];       // xy = centro (px), z = raio (px), w = força
 uniform vec4 uPush[6];      // xy = centro (px), z = raio (px)
 uniform vec2 uPushV[6];     // deslocamento (px) do conteúdo
@@ -304,31 +330,31 @@ vec2 warp(vec2 uv){
 }
 
 void main(){
-  vec2 uv = vec2(1.0 - vUv.x, vUv.y);          // espelhado, como selfie
+  vec2 uv = vec2(uMirror > .5 ? 1.0 - vUv.x : vUv.x, vUv.y);   // frontal espelhada, como selfie
   if (uBypass > .5) { gl_FragColor = vec4(texture2D(uVideo, uv).rgb,1.); return; }
   uv = warp(uv);
   vec3 c = texture2D(uVideo, uv).rgb;
 
   // máscara da pele e camada de make, com borda suave
-  float m = 0.; vec4 mk = vec4(0.);
-  for (int i=-2;i<=2;i++) for (int j=-2;j<=2;j++){
-    vec2 o = vec2(float(i), float(j));
-    m  += texture2D(uMask, uv + o*uMaskTexel*1.5).a;
-    mk += texture2D(uMake, uv + o*uMakeTexel*0.8);
-  }
-  m /= 25.; mk /= 25.;
+  float m = texture2D(uMask, uv).a;
+  vec4 mk = texture2D(uMake, uv);
+
+  // nitidez leve fora da pele (cabelo, olhos, fundo) para a imagem não ficar "lavada"
+  vec3 nb = (texture2D(uVideo, uv + vec2(uTexel.x,0.)).rgb + texture2D(uVideo, uv - vec2(uTexel.x,0.)).rgb
+           + texture2D(uVideo, uv + vec2(0.,uTexel.y)).rgb + texture2D(uVideo, uv - vec2(0.,uTexel.y)).rgb) * .25;
+  c = clamp(c + (c - nb) * .45 * (1. - m), 0., 1.);
 
   vec3 base = c;
   if (m > 0.001 && uSmooth > 0.001){
     // filtro bilateral: alisa a pele sem borrar contornos
     vec3 sum = c; float wsum = 1.;
-    for (int r=1;r<=5;r++){
-      for (int k=0;k<8;k++){
-        float a = float(k)*0.785398 + float(r)*0.39;
+    for (int r=1;r<=4;r++){
+      for (int k=0;k<6;k++){
+        float a = float(k)*1.0472 + float(r)*0.52;
         vec2 o = vec2(cos(a), sin(a)) * float(r) * uRadius * uTexel;
         vec3 s = texture2D(uVideo, uv + o).rgb;
         vec3 d = s - c;
-        float w = exp(-dot(d,d)*22.) * exp(-float(r*r)/30.);
+        float w = exp(-dot(d,d)*22.) * exp(-float(r*r)/20.);
         sum += s*w; wsum += w;
       }
     }
@@ -357,8 +383,6 @@ void main(){
 }`;
 
 function setupGL(){
-  const W = video.videoWidth, H = video.videoHeight;
-  view.width = W; view.height = H;
   gl = view.getContext("webgl", {preserveDrawingBuffer:true, premultipliedAlpha:false, antialias:false});
   if (!gl) throw new Error("WebGL indisponível neste navegador");
 
@@ -374,7 +398,7 @@ function setupGL(){
   gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1, 1,-1, -1,1, 1,1]), gl.STATIC_DRAW);
   const loc = gl.getAttribLocation(prog, "p"); gl.enableVertexAttribArray(loc); gl.vertexAttribPointer(loc, 2, gl.FLOAT, false, 0, 0);
 
-  for (const n of ["uVideo","uMask","uMake","uTexel","uMaskTexel","uMakeTexel","uSize","uSmooth","uGlow","uRadius","uBypass","uEye","uPush","uPushV"]) uni[n] = gl.getUniformLocation(prog, n);
+  for (const n of ["uVideo","uMask","uMake","uTexel","uMaskTexel","uMakeTexel","uSize","uSmooth","uGlow","uRadius","uBypass","uMirror","uEye","uPush","uPushV"]) uni[n] = gl.getUniformLocation(prog, n);
 
   const mkTex = unit => { const t = gl.createTexture(); gl.activeTexture(gl.TEXTURE0+unit); gl.bindTexture(gl.TEXTURE_2D, t);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR); gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
@@ -382,14 +406,20 @@ function setupGL(){
   texVideo = mkTex(0); texMask = mkTex(1); texMake = mkTex(2);
   gl.uniform1i(uni.uVideo, 0); gl.uniform1i(uni.uMask, 1); gl.uniform1i(uni.uMake, 2);
 
-  maskCv = document.createElement("canvas"); maskCv.width = Math.round(W/4); maskCv.height = Math.round(H/4);
-  makeCv = document.createElement("canvas"); makeCv.width = W; makeCv.height = H;
+  maskCv = document.createElement("canvas"); makeCv = document.createElement("canvas");
   maskCtx = maskCv.getContext("2d"); makeCtx = makeCv.getContext("2d");
-
+  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+  resizeGL();
+}
+function resizeGL(){
+  const W = video.videoWidth, H = video.videoHeight;
+  view.width = W; view.height = H;
+  maskCv.width = Math.round(W/4); maskCv.height = Math.round(H/4);
+  const ks = Math.min(1, 720 / Math.min(W, H));      // camada de make no máx. ~720p: leve e nítida o bastante
+  makeCv.width = Math.round(W*ks); makeCv.height = Math.round(H*ks);
   gl.uniform2f(uni.uTexel, 1/W, 1/H); gl.uniform2f(uni.uSize, W, H);
   gl.uniform2f(uni.uMaskTexel, 1/maskCv.width, 1/maskCv.height);
   gl.uniform2f(uni.uMakeTexel, 1/makeCv.width, 1/makeCv.height);
-  gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
   gl.viewport(0,0,W,H);
 }
 
@@ -406,13 +436,15 @@ function drawLayers(lm){
   const mw = maskCv.width, mh = maskCv.height, c = maskCtx;
   c.clearRect(0,0,mw,mh);
   if (lm){
+    const fw = Math.hypot((lm[454].x-lm[234].x)*mw, (lm[454].y-lm[234].y)*mh);
+    c.shadowColor = "#fff"; c.shadowBlur = fw*.05;
     c.globalCompositeOperation = "source-over"; c.fillStyle = "#fff";
     c.beginPath(); path(c, grow(lm, OVAL, .97), OVAL, mw, mh); c.fill();
     c.globalCompositeOperation = "destination-out";
     for (const idx of [EYE_L, EYE_R]) { c.beginPath(); path(c, grow(lm, idx, 1.35), idx, mw, mh); c.fill(); }
     for (const idx of [BROW_L, BROW_R]) { c.beginPath(); path(c, grow(lm, idx, 1.2), idx, mw, mh); c.fill(); }
     c.beginPath(); path(c, lm, LIP_IN, mw, mh); c.fill();
-    c.globalCompositeOperation = "source-over";
+    c.globalCompositeOperation = "source-over"; c.shadowBlur = 0;
   }
   // make
   const kw = makeCv.width, kh = makeCv.height, k = makeCtx;
@@ -487,18 +519,25 @@ function drawLashes(k, lm, kw, kh, faceW){
 function hexA(hex, a){ const n = parseInt(hex.slice(1),16); return `rgba(${n>>16&255},${n>>8&255},${n&255},${a})`; }
 
 // ---------- loop ----------
-let lastVideoTime = -1;
+let lastVideoTime = -1, frameNo = 0, detectMs = 0, wasComparing = false;
 function loop(){
   requestAnimationFrame(loop);
   if (video.readyState < 2) return;
-  const now = performance.now();
-  if (video.currentTime !== lastVideoTime){
-    lastVideoTime = video.currentTime;
-    try{
-      const res = landmarker.detectForVideo(video, now);
-      if (res.faceLandmarks && res.faceLandmarks.length){ lastLm = smoothLm(res.faceLandmarks[0]); lostFrames = 0; }
-      else if (++lostFrames > 6) lastLm = null;
-    }catch(e){ /* quadro perdido */ }
+  const newFrame = video.currentTime !== lastVideoTime;
+  if (!newFrame && comparing === wasComparing) return;   // nada mudou: não redesenha
+  wasComparing = comparing;
+  if (newFrame){
+    lastVideoTime = video.currentTime; frameNo++;
+    // se a detecção estiver pesada (>14 ms), roda em quadros alternados
+    if (detectMs < 14 || frameNo % 2 === 0){
+      const t0 = performance.now();
+      try{
+        const res = landmarker.detectForVideo(video, t0);
+        if (res.faceLandmarks && res.faceLandmarks.length){ lastLm = smoothLm(res.faceLandmarks[0]); lostFrames = 0; }
+        else if (++lostFrames > 6) lastLm = null;
+      }catch(e){ /* quadro perdido */ }
+      detectMs = detectMs*.9 + (performance.now()-t0)*.1;
+    }
   }
   $("faceHint").classList.toggle("on", !lastLm && S.preset !== "off");
 
@@ -515,8 +554,9 @@ function loop(){
 
   gl.uniform1f(uni.uSmooth, S.smooth/100);
   gl.uniform1f(uni.uGlow, S.glow/100);
-  gl.uniform1f(uni.uRadius, Math.max(1.5, video.videoHeight/360) * (0.6 + S.smooth/100));
+  gl.uniform1f(uni.uRadius, Math.max(1.5, Math.max(video.videoWidth, video.videoHeight)/360) * (0.6 + S.smooth/100));
   gl.uniform1f(uni.uBypass, comparing ? 1 : 0);
+  gl.uniform1f(uni.uMirror, facing === "user" ? 1 : 0);
   setWarp(lastLm);
   gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 }
@@ -569,7 +609,7 @@ async function startRec(){
   const out = view.captureStream(30);
   stream.getAudioTracks().forEach(t => out.addTrack(t));
   lastMime = pickMime();
-  try{ recorder = new MediaRecorder(out, {mimeType:lastMime || undefined, videoBitsPerSecond:3_000_000, audioBitsPerSecond:128_000}); }
+  try{ recorder = new MediaRecorder(out, {mimeType:lastMime || undefined, videoBitsPerSecond:4_500_000, audioBitsPerSecond:128_000}); }
   catch{ recorder = new MediaRecorder(out); }
   lastMime = recorder.mimeType || lastMime || "video/mp4";
   chunks = [];
