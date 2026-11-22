@@ -94,6 +94,7 @@
   <p>Pele suavizada, blush e batom em tempo real. Grave até 10 minutos, sem marca d'água, e salve direto no seu rolo da câmera.</p>
   <button class="cta" id="start">Abrir câmera</button>
   <div id="status"></div>
+  <div style="position:absolute;bottom:calc(env(safe-area-inset-bottom) + 12px);font-size:11px;color:rgba(255,255,255,.35)">versão 3</div>
 </div>
 
 <div id="top">
@@ -240,16 +241,30 @@ function markPreset(){ document.querySelectorAll(".pre").forEach(b => b.classLis
 // ---------- câmera ----------
 let facing = "user";
 // pede 1080p na proporção do sensor (o iPhone gira para retrato sozinho); assim não há recorte/zoom
-const camConstraints = () => ({ facingMode:{ideal:facing}, width:{ideal:1920}, height:{ideal:1080}, frameRate:{ideal:30, max:30} });
+const camConstraints = () => lightMode
+  ? { facingMode:{ideal:facing}, width:{ideal:1280}, height:{ideal:720}, frameRate:{ideal:30, max:30} }
+  : { facingMode:{ideal:facing}, width:{ideal:1920}, height:{ideal:1080}, frameRate:{ideal:30, max:30} };
 
 async function attachStream(){
   video.srcObject = stream;
-  await video.play();
+  try{ await video.play(); }catch(e){ if (e.name !== "AbortError") throw e; }
   await new Promise(r => video.videoWidth ? r() : video.onloadedmetadata = r);
 }
 
+let switching = false;
+async function restartCamera(){
+  if (switching) return; switching = true;
+  try{
+    stream.getVideoTracks().forEach(t => t.stop());
+    const vs = await navigator.mediaDevices.getUserMedia({ video: camConstraints(), audio:false });
+    stream = new MediaStream([...vs.getVideoTracks(), ...stream.getAudioTracks()]);
+    await attachStream(); resizeGL(); frameAvg = 33; lastFrameT = 0;
+  }catch(e){ console.error(e); }
+  switching = false;
+}
 async function flipCamera(){
   if (recorder){ toast("Pare a gravação para trocar de câmera."); return; }
+  if (switching) return; switching = true;
   const btn = $("flip"); btn.disabled = true;
   try{
     facing = facing === "user" ? "environment" : "user";
@@ -262,7 +277,7 @@ async function flipCamera(){
   }catch(e){
     console.error(e); toast("Não consegui trocar de câmera.");
     facing = facing === "user" ? "environment" : "user";
-  }finally{ btn.disabled = false; }
+  }finally{ btn.disabled = false; switching = false; }
 }
 
 // ---------- início ----------
@@ -336,8 +351,13 @@ void main(){
   vec3 c = texture2D(uVideo, uv).rgb;
 
   // máscara da pele e camada de make, com borda suave
-  float m = texture2D(uMask, uv).a;
-  vec4 mk = texture2D(uMake, uv);
+  // bordas suaves com poucas leituras (máscara 3x3, make em cruz)
+  float m = 0.;
+  for (int i=-1;i<=1;i++) for (int j=-1;j<=1;j++) m += texture2D(uMask, uv + vec2(float(i),float(j))*uMaskTexel*1.6).a;
+  m /= 9.;
+  vec2 mo = uMakeTexel*1.3;
+  vec4 mk = (texture2D(uMake, uv)*2. + texture2D(uMake, uv+vec2(mo.x,0.)) + texture2D(uMake, uv-vec2(mo.x,0.))
+           + texture2D(uMake, uv+vec2(0.,mo.y)) + texture2D(uMake, uv-vec2(0.,mo.y))) / 6.;
 
   // nitidez leve fora da pele (cabelo, olhos, fundo) para a imagem não ficar "lavada"
   vec3 nb = (texture2D(uVideo, uv + vec2(uTexel.x,0.)).rgb + texture2D(uVideo, uv - vec2(uTexel.x,0.)).rgb
@@ -437,14 +457,13 @@ function drawLayers(lm){
   c.clearRect(0,0,mw,mh);
   if (lm){
     const fw = Math.hypot((lm[454].x-lm[234].x)*mw, (lm[454].y-lm[234].y)*mh);
-    c.shadowColor = "#fff"; c.shadowBlur = fw*.05;
     c.globalCompositeOperation = "source-over"; c.fillStyle = "#fff";
     c.beginPath(); path(c, grow(lm, OVAL, .97), OVAL, mw, mh); c.fill();
     c.globalCompositeOperation = "destination-out";
     for (const idx of [EYE_L, EYE_R]) { c.beginPath(); path(c, grow(lm, idx, 1.35), idx, mw, mh); c.fill(); }
     for (const idx of [BROW_L, BROW_R]) { c.beginPath(); path(c, grow(lm, idx, 1.2), idx, mw, mh); c.fill(); }
     c.beginPath(); path(c, lm, LIP_IN, mw, mh); c.fill();
-    c.globalCompositeOperation = "source-over"; c.shadowBlur = 0;
+    c.globalCompositeOperation = "source-over";
   }
   // make
   const kw = makeCv.width, kh = makeCv.height, k = makeCtx;
@@ -467,13 +486,12 @@ function drawLayers(lm){
       }
     }
     if (S.brow > 0){
-      k.save(); k.fillStyle = hexA("#3b2a24", (S.brow/100)*.45); k.shadowColor = hexA("#3b2a24", (S.brow/100)*.45); k.shadowBlur = faceW*.012;
+      k.save(); k.fillStyle = hexA("#3b2a24", (S.brow/100)*.45);
       for (const idx of [BROW_L, BROW_R]) { k.beginPath(); path(k, lm, idx, kw, kh); k.fill(); }
       k.restore();
     }
     if (S.lip > 0){
       k.save(); k.fillStyle = hexA(S.lipColor, (S.lip/100)*.8);
-      k.shadowColor = hexA(S.lipColor, (S.lip/100)*.8); k.shadowBlur = faceW*.02;
       k.beginPath(); path(k, lm, LIP_OUT, kw, kh); path(k, lm, LIP_IN, kw, kh); k.fill("evenodd"); k.restore();
     }
     if (S.lash > 0) drawLashes(k, lm, kw, kh, faceW);
@@ -491,7 +509,6 @@ function drawLashes(k, lm, kw, kh, faceW){
     const up = {x:outer.x-cx, y:outer.y-cy}; const ul = Math.hypot(up.x,up.y)||1;
     const wing = {x: outer.x + (wingDir.x/wl)*eyeW*.16 + (up.x/ul)*eyeW*.02, y: outer.y + (wingDir.y/wl)*eyeW*.16 - eyeW*.07};
     k.save(); k.lineCap = "round"; k.lineJoin = "round"; k.strokeStyle = hexA(col, a*.85);
-    k.shadowColor = hexA(col, a*.5); k.shadowBlur = eyeW*.04;
     for (let i=1;i<n;i++){
       const t = i/(n-1);
       k.lineWidth = eyeW*(.018 + .04*t*t) * (0.6 + a*.6);
@@ -499,7 +516,7 @@ function drawLashes(k, lm, kw, kh, faceW){
     }
     k.lineWidth = eyeW*.035*(0.6+a*.6); k.beginPath(); k.moveTo(outer.x, outer.y); k.lineTo(wing.x, wing.y); k.stroke();
     // cílios: fiozinhos curvos saindo da pálpebra para cima/fora
-    k.shadowBlur = 0; k.strokeStyle = hexA(col, a*.75);
+    k.strokeStyle = hexA(col, a*.75);
     for (let i=2;i<n;i++){
       for (const f of [0, .5]){
         const p0 = pts[i-1], p1 = pts[i];
@@ -520,6 +537,8 @@ function hexA(hex, a){ const n = parseInt(hex.slice(1),16); return `rgba(${n>>16
 
 // ---------- loop ----------
 let lastVideoTime = -1, frameNo = 0, detectMs = 0, wasComparing = false;
+const detCv = document.createElement("canvas"), detCtx = detCv.getContext("2d", {willReadFrequently:false});
+let frameAvg = 33, lastFrameT = 0, lightMode = false, slowSince = 0;
 function loop(){
   requestAnimationFrame(loop);
   if (video.readyState < 2) return;
@@ -527,12 +546,22 @@ function loop(){
   if (!newFrame && comparing === wasComparing) return;   // nada mudou: não redesenha
   wasComparing = comparing;
   if (newFrame){
+    const tn = performance.now();
+    if (lastFrameT) frameAvg = frameAvg*.92 + (tn-lastFrameT)*.08;
+    lastFrameT = tn;
+    if (!lightMode && !recorder && frameAvg > 50){
+      if (!slowSince) slowSince = tn;
+      else if (tn - slowSince > 2500){ lightMode = true; restartCamera(); toast("Ativei o modo leve (720p) para ficar mais fluido."); }
+    } else slowSince = 0;
     lastVideoTime = video.currentTime; frameNo++;
     // se a detecção estiver pesada (>14 ms), roda em quadros alternados
     if (detectMs < 14 || frameNo % 2 === 0){
       const t0 = performance.now();
       try{
-        const res = landmarker.detectForVideo(video, t0);
+        const dw = 288, dh = Math.round(dw * video.videoHeight / video.videoWidth);
+        if (detCv.width !== dw || detCv.height !== dh){ detCv.width = dw; detCv.height = dh; }
+        detCtx.drawImage(video, 0, 0, dw, dh);
+        const res = landmarker.detectForVideo(detCv, t0);
         if (res.faceLandmarks && res.faceLandmarks.length){ lastLm = smoothLm(res.faceLandmarks[0]); lostFrames = 0; }
         else if (++lostFrames > 6) lastLm = null;
       }catch(e){ /* quadro perdido */ }
